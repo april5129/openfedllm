@@ -1,6 +1,6 @@
-max_steps=1 # 10
-num_rounds=1 # 200
-batch_size=1 # 16
+max_steps=60 # 10
+num_rounds=5 # 200
+batch_size=8 # 16
 gradient_accumulation_steps=1
 seq_length=16 # 512
 num_clients=1 # 20
@@ -11,12 +11,12 @@ lr=5e-5
 
 # local_data_dir=""       # you may uncomment this line if your data is stored locally and include it in the python command
 dataset_name="vicgalle/alpaca-gpt4"
-dataset_sample=10 # 20000
+dataset_sample=3000 # 20000
 model_name_or_path="openai-community/gpt2" # meta-llama/Llama-2-7b-hf
 output_dir=./output
 
 # gpu=2
-fed_alg="fedyogi"
+fed_alg="local0"
 
 # 移除了CUDA_VISIBLE_DEVICES=$gpu环境变量设置
 python3 main_sft.py \
