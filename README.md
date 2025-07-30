@@ -10,6 +10,86 @@ OpenFedLLM includes the following key features:
 
 ![intro](doc/assets/openfedllm-intro.png)
 
+## 分布式部署
+
+为了支持在多台机器上分布式部署，我们提供了拆分的服务端和客户端代码：
+
+- `server.py`: 服务端代码，负责全局模型聚合和分发
+- `client.py`: 客户端代码，负责本地模型训练
+
+### 部署架构
+
+在4台机器上的部署架构如下：
+
+1. 一台机器作为服务端（参数服务器）
+2. 三台机器作为客户端（训练节点）
+
+### 部署步骤
+
+#### 1. 环境准备
+
+在所有机器上安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+#### 2. 数据准备
+
+在每台客户端机器上准备本地数据集。确保每台机器上的数据是不同的，以符合联邦学习的隐私保护特性。
+
+#### 3. 配置修改
+
+修改 `config.py` 文件中的参数以适应分布式部署：
+
+- `num_clients`: 设置为3（客户端数量）
+- `sample_clients`: 设置为参与每轮训练的客户端数量
+
+#### 4. 服务端启动
+
+在服务端机器上运行：
+
+```bash
+# 使用HTTP通信版本
+python server_http.py
+
+# 或使用提供的启动脚本
+run_server.bat
+```
+
+#### 5. 客户端启动
+
+在每台客户端机器上运行：
+
+```bash
+# 使用HTTP通信版本
+python client_http.py
+
+# 或使用提供的启动脚本
+run_client.bat
+```
+
+### 通信实现
+
+我们提供了基于HTTP的通信实现示例：
+
+1. **HTTP/REST API**: 使用Flask实现服务端API，客户端通过HTTP请求与服务端通信
+   - 服务端代码: `server_http.py`
+   - 客户端代码: `client_http.py`
+   - 启动脚本: `run_server.bat` 和 `run_client.bat`
+
+其他可选的通信机制：
+
+1. **Socket通信**: 使用Python的socket库实现自定义通信协议
+2. **消息队列**: 使用RabbitMQ、Kafka等消息队列系统
+
+### 注意事项
+
+1. 确保所有机器在同一网络中，能够互相通信
+2. 配置防火墙规则，开放必要的端口
+3. 在生产环境中，建议使用加密通信以保护模型参数
+4. 根据实际硬件配置调整训练参数（batch_size、learning_rate等）
+
 ## News🔥
 - **2024-09:** FedLLM-Bench is accepted by **NeurIPS 2024** Datasets and Benchmarks Track!
 - **2024-06:** We released the first realistic benchmark for FedLLM: FedLLM-Bench. Check the [Paper](https://arxiv.org/pdf/2406.04845) | [Code](https://github.com/rui-ye/FedLLM-Bench).

@@ -23,13 +23,14 @@ class FedArguments:
     fedopt_beta1: Optional[float] = field(default=0.9, metadata={"help": "the beta1 parameter of FedYogi and FedAdam"})
     fedopt_beta2: Optional[float] = field(default=0.99, metadata={"help": "the beta2 parameter of FedYogi and FedAdam"})
     save_model_freq: Optional[int] = field(default=50, metadata={"help": "the frequency to save the model. 50 means save every 50 rounds"})
+    client_id: Optional[int] = field(default=0, metadata={"help": "the client id for distributed training"})
 
 @dataclass
 class ScriptArguments:
 
-    model_name_or_path: Optional[str] = field(default="meta-llama/Llama-2-7b-hf", metadata={"help": "the model name"})
+    model_name_or_path: Optional[str] = field(default="openai-community/gpt2", metadata={"help": "the model name"})
     dataset_name: Optional[str] = field(
-        default="lucasmccabe-lmi/CodeAlpaca-20k", metadata={"help": "the dataset name"}
+        default="vicgalle/alpaca-gpt4", metadata={"help": "the dataset name"}
     )
     log_with: Optional[str] = field(default="none", metadata={"help": "use 'wandb' to log with wandb"})
     learning_rate: Optional[float] = field(default=2e-5, metadata={"help": "the learning rate"})    # vicuna and alpaca use 2e-5
