@@ -16,10 +16,13 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def setup_seed(seed):
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    # torch.cuda.manual_seed_all(seed)
+    # torch.backends.cudnn.deterministic = True
+    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
     np.random.seed(seed)
     random.seed(seed)
-    torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.deterministic = True
     
 def cosine_annealing_lr(r, R, eta_max, eta_min=0):
     return eta_min + (eta_max - eta_min) * (1 + np.cos(np.pi * r / R)) / 2

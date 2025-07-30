@@ -12,7 +12,8 @@ class Client(object):
         self.train_iterator = iter(self.train_loader)
         self.model = None
 
-        self.device = torch.device(f'cuda:{args.device}')
+        # 修改设备初始化
+        self.device = torch.device('cpu')  # 改为直接使用CPU
         self.candidate_seeds = candidate_seeds
 
     def local_train_with_seed_pool(self, pulled_model, cur_round):

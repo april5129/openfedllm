@@ -93,7 +93,7 @@ class FerretFramework(object):
                     seed = self.candidate_seeds[idx]
                     sqrt_d = 1 / group_size ** 0.5
                     torch.manual_seed(seed)
-                    torch.cuda.random.manual_seed(seed)
+                    # torch.cuda.random.manual_seed(seed) 
                     base = torch.empty(group_size, device=group_delta.device, dtype=group_delta.dtype)
                     # 生成截断正态分布的随机向量
                     base = torch.nn.init.trunc_normal_(base, mean=0., std=1., a=-sqrt_d, b=sqrt_d)
