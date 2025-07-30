@@ -113,8 +113,8 @@ if __name__ == '__main__':
         with open(os.path.join(log_dir, 'config.yaml'), 'w') as writer:
             writer.write(config)
 
-    # since only CUDA device is available, load all models on device 0
-    args.device = 0
+    # 删除这行强制设置GPU的代码
+    # args.device = 0
     client_indices_rounds = []
     for _ in range(args.rounds):
         client_indices_rounds.append(np.random.choice(np.arange(args.num_clients), size=int(args.num_clients * args.m), replace=False))

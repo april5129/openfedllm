@@ -102,14 +102,10 @@ def get_training_args(script_args, new_lr):
 
 def get_model_config(script_args):
 
-    # 移除了所有GPU相关的设备映射（device_map）
-    # 禁用了量化配置（quantization_config），因为量化主要是为了GPU内存优化
-    # 移除了torch_dtype设置，让模型使用默认精度
-    # For CPU-only training, disable quantization and device mapping
     device_map = None
     quantization_config = None
     torch_dtype = None
-    
+
     # If user still wants to use quantization, warn them
     if script_args.load_in_8bit or script_args.load_in_4bit:
         print("Warning: Quantization (8bit/4bit) is disabled for CPU training. Using full precision instead.")

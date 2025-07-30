@@ -46,15 +46,19 @@ class Server(object):
         # 根据设备类型加载模型
         self.model = AutoModelForCausalLM.from_pretrained(
             args.model,
-            device_map='cpu' if args.device < 0 else 'cuda',
-            torch_dtype=torch.float32 if args.device < 0 else torch.float16,
+            device_map=None,  # 改为None而不是'auto'或'cpu'
+            torch_dtype=torch.float32,  # 使用float32
             trust_remote_code=True
         )
         
+        # 修改设备初始化
+        # 强制使用CPU设备
+        self.device = torch.device('cpu')
         # 初始化全局种子池
         self.seed_pool = {seed: 0.0 for seed in self.candidate_seeds}
         
-        self.device = torch.device('cpu') if args.device < 0 else torch.device(f'cuda:{args.device}')
+        # 删除这行重复的设备设置
+        # self.device = torch.device('cpu') if args.device < 0 else torch.device(f'cuda:{args.device}')
 
     def aggregate_seed_pool(self, selected_client_list, cur_round=1):
         # 聚合所有客户端上传的低维梯度/参数更新
@@ -173,3 +177,22 @@ class Server(object):
         print()
         self.model = self.model.cpu()
         return acc_total_eval / num_eval
+
+    def get_model_config(script_args):
+        # 移除所有GPU相关配置
+        device_map = None
+        quantization_config = None
+        torch_dtype = None
+        
+        if script_args.load_in_8bit or script_args.load_in_4bit:
+            print("Warning: Quantization (8bit/4bit) is disabled for CPU training. Using full precision instead.")
+        
+        return device_map, quantization_config, torch_dtype
+
+    def load_model(model_name, config):
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map=None,  # 强制使用CPU
+            trust_remote_code=config.trust_remote_code
+        )
+        return model
