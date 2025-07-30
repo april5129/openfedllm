@@ -90,8 +90,9 @@ if __name__ == '__main__':
     previous_metric = args.eval_metric
     args.eval_metric = 'loss'
     # set CUDA visibility to targeted cuda device, to avoid the several hundred MB memory consumption of device 0
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
+    # 删除或注释掉这些CUDA相关的设置
+    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
     setup_seed(args.seed)
     list_train_loader, eval_loader, _ = get_loaders(args)
     

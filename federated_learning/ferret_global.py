@@ -21,6 +21,7 @@ def min_max_norm(vec):
 
 # 联邦学习服务器端实现
 class Server(object):
+    # 修改设备初始化逻辑
     def __init__(self, args, eval_loader, candidate_seeds, log_dir):
         # 初始化，保存参数、评估数据、候选种子、日志目录等
         self.args = args
@@ -42,13 +43,18 @@ class Server(object):
             special_tokens["unk_token"] = DefaultToken.UNK_TOKEN.value
         self.tokenizer.add_special_tokens(special_tokens)
         
-        # 加载初始全局模型
-        self.model = AutoModelForCausalLM.from_pretrained(args.model, device_map='cpu', torch_dtype=torch.float16, trust_remote_code=True)
+        # 根据设备类型加载模型
+        self.model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            device_map='cpu' if args.device < 0 else 'cuda',
+            torch_dtype=torch.float32 if args.device < 0 else torch.float16,
+            trust_remote_code=True
+        )
         
         # 初始化全局种子池
         self.seed_pool = {seed: 0.0 for seed in self.candidate_seeds}
         
-        self.device = torch.device(f'cuda:{self.args.device}')
+        self.device = torch.device('cpu') if args.device < 0 else torch.device(f'cuda:{args.device}')
 
     def aggregate_seed_pool(self, selected_client_list, cur_round=1):
         # 聚合所有客户端上传的低维梯度/参数更新
