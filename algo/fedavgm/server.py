@@ -2,16 +2,13 @@ import random
 import torch
 
 def get_clients_this_round(fed_args, round):
-    if (fed_args.fed_alg).startswith('local'):
-        clients_this_round = [int((fed_args.fed_alg)[-1])]
+    if fed_args.num_clients < fed_args.sample_clients:
+        clients_this_round = list(range(fed_args.num_clients))
     else:
-        if fed_args.num_clients < fed_args.sample_clients:
-            clients_this_round = list(range(fed_args.num_clients))
-        else:
-            random.seed(round)
-            clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
+        random.seed(round)
+        clients_this_round = sorted(random.sample(range(fed_args.num_clients), fed_args.sample_clients))
     return clients_this_round
-
+    
 def global_aggregate(fed_args, global_dict, local_dict_list, sample_num_list, clients_this_round, round_idx, proxy_dict=None):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])
     global_auxiliary = None
