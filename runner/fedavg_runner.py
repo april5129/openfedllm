@@ -14,6 +14,10 @@ from peft import (
     prepare_model_for_kbit_training
 )
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -83,51 +87,119 @@ data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
 
-for round in tqdm(range(fed_args.num_rounds)):
-
-    clients_this_round = get_clients_this_round(fed_args, round)  # Select the clients participating in this round of training
-
-    print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
+# Define the client training function
+def train_client(client_id, global_dict, local_datasets, round, fed_args, script_args, 
+                 tokenizer, formatting_prompts_func, data_collator, training_loss, 
+                 local_dict_list, clients_this_round):
+    """
+    Single-client training function
+    """
+    if client_id not in clients_this_round:
+        training_loss[client_id].append(-1)  # -1 indicates that the client did not participate in training
+        return
     
-    for client in range(fed_args.num_clients):
-
-        if client not in clients_this_round:
-            training_loss[client].append(-1)            # -1 is an indicator of not training
-            continue
-
-        # sync the global model to the local model
+    try:
+        # Create model replicas (each thread requires an independent model instance)
+        device_map, quantization_config, torch_dtype = get_model_config(script_args)
+        model = AutoModelForCausalLM.from_pretrained(
+            script_args.model_name_or_path,
+            quantization_config=quantization_config,
+            device_map=device_map,
+            trust_remote_code=script_args.trust_remote_code,
+            torch_dtype=torch_dtype,
+        )
+        
+        if script_args.load_in_8bit or script_args.load_in_4bit:
+            model = prepare_model_for_kbit_training(
+                model, use_gradient_checkpointing=training_args.gradient_checkpointing
+            )
+        
+        model = get_peft_model(model, peft_config)
+        model.config.use_cache = False
+        
+        if training_args.gradient_checkpointing:
+            model.enable_input_require_grads()
+        
+        # Sync global model to local
         set_peft_model_state_dict(model, global_dict)
-        sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
-        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
-        training_args = get_training_args(script_args, new_lr)
-
-        # ===== Train local model on the client side =====
-        trainer = get_local_fedavg_trainer(
+        
+        # Get current round's dataset
+        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)
+        
+        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6) # Cosine LR decay
+        new_training_args = get_training_args(script_args, new_lr)
+        
+        # Creat trainer
+        trainer = get_fedavg_local_trainer(
             model=model,
             tokenizer=tokenizer,
-            training_args=training_args,
+            training_args=new_training_args,
             local_dataset=sub_dataset,
             formatting_prompts_func=formatting_prompts_func,
             data_collator=data_collator,
             script_args=script_args,
         )
+        
+        # Training the model
+        results = trainer.train()
+        training_loss[client_id].append(results.training_loss)
+        
+        # Get the local model parameters
+        local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))
+        
+        print(f"Client {client_id} training completed")
+        
+    except Exception as e:
+        print(f"Error in client {client_id} training: {e}")
+        training_loss[client_id].append(-1)
+
+for round in tqdm(range(fed_args.num_rounds)):
+    # Select the clients participating in this round of training
+    clients_this_round = get_clients_this_round(fed_args, round)
+    
+    print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
+    
+    # Use a thread pool to execute client training tasks
+    max_workers = min(len(clients_this_round), 100)  # Limit the number of concurrent threads to avoid  out-of-memory errors
 
     
-        results = trainer.train()
-
-        training_loss[client].append(results.training_loss)
-
-        # ===== Client transmits local information to server =====
-        local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all client training tasks
+        future_to_client = {
+            executor.submit(
+                train_client, 
+                client, 
+                copy.deepcopy(global_dict),  # Each thread gets its own independent replica of the global model
+                local_datasets, 
+                round, 
+                fed_args, 
+                script_args,
+                tokenizer, 
+                formatting_prompts_func, 
+                data_collator, 
+                training_loss, 
+                local_dict_list, 
+                clients_this_round
+            ): client for client in range(fed_args.num_clients)
+        }
+        
+        # Wait for all tasks to complete
+        for future in as_completed(future_to_client):
+            client = future_to_client[future]
+            try:
+                future.result()
+            except Exception as exc:
+                print(f'Client {client} generated an exception: {exc}')
     
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
         global_dict, local_dict_list, sample_num_list, clients_this_round)
     set_peft_model_state_dict(model, global_dict)   # Update global model
-
-    # ===== Save the model =====
+    
+    # ===== Save the global model =====
     if (round+1) % fed_args.save_model_freq == 0:
-        trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+        tokenizer.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
 

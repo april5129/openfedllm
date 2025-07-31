@@ -90,7 +90,6 @@ if __name__ == '__main__':
     previous_metric = args.eval_metric
     args.eval_metric = 'loss'
     # set CUDA visibility to targeted cuda device, to avoid the several hundred MB memory consumption of device 0
-    # 删除或注释掉这些CUDA相关的设置
     # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
     setup_seed(args.seed)
@@ -113,7 +112,6 @@ if __name__ == '__main__':
         with open(os.path.join(log_dir, 'config.yaml'), 'w') as writer:
             writer.write(config)
 
-    # 删除这行强制设置GPU的代码
     # args.device = 0
     client_indices_rounds = []
     for _ in range(args.rounds):
