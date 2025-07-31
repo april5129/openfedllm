@@ -1,5 +1,4 @@
 import random
-import torch
 
 def get_clients_this_round(fed_args, round):
     if (fed_args.fed_alg).startswith('local'):

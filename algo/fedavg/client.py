@@ -1,5 +1,3 @@
-import torch
-import copy
 from trl import SFTTrainer
 
 def get_local_fedavg_trainer(script_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator):

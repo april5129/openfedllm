@@ -1,18 +1,33 @@
 import copy
 import os
-from tqdm import tqdm
-import numpy as np
+import sys
 import time
+
+import numpy as np
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import DataCollatorForCompletionOnlyLM
-from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training
-from algo.fedavg.client import get_local_fedavg_trainer
-from utils import *
-from algo import *
+from peft import (
+    get_peft_model, 
+    get_peft_model_state_dict, 
+    set_peft_model_state_dict, 
+    prepare_model_for_kbit_training
+)
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from algo.fedavg.client import *
+from algo.fedavg.server import *
 from config import get_config, save_config, get_model_config, get_training_args
+from dataset.split_dataset import *
+from utils import *
+from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
+fed_args.fed_alg = "fedavg" # Force the fed_alg parameter to be 'fedavg'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -67,13 +82,10 @@ data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
-total_training_time = 0.0
-total_communication_time = 0.0
-total_aggregation_time = 0.0
+
 for round in tqdm(range(fed_args.num_rounds)):
 
-    # 选择参与本轮训练的客户端
-    clients_this_round = get_clients_this_round(fed_args, round)
+    clients_this_round = get_clients_this_round(fed_args, round)  # Select the clients participating in this round of training
 
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
     
@@ -83,11 +95,8 @@ for round in tqdm(range(fed_args.num_rounds)):
             training_loss[client].append(-1)            # -1 is an indicator of not training
             continue
 
-        com_time_start = time.time()
-        # 同步全局模型到本地
-        set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
-        com_time_end = time.time()
-        total_communication_time += com_time_end - com_time_start
+        # sync the global model to the local model
+        set_peft_model_state_dict(model, global_dict)
         sub_dataset = get_dataset_this_round(local_datasets[client], round, fed_args, script_args)      # get the required sub-dataset for this round
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
         training_args = get_training_args(script_args, new_lr)
@@ -100,37 +109,21 @@ for round in tqdm(range(fed_args.num_rounds)):
             local_dataset=sub_dataset,
             formatting_prompts_func=formatting_prompts_func,
             data_collator=data_collator,
-            global_dict=global_dict,
-            fed_args=fed_args,
             script_args=script_args,
-            local_auxiliary=auxiliary_model_list[client],
-            global_auxiliary=global_auxiliary,
         )
 
-        train_time_start = time.time()
+    
         results = trainer.train()
-        train_time_end = time.time()
-        total_training_time += train_time_end - train_time_start
 
         training_loss[client].append(results.training_loss)
 
         # ===== Client transmits local information to server =====
-        com_time_start = time.time()
-
         local_dict_list[client] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
-        com_time_end = time.time()
-        total_communication_time += com_time_end - com_time_start
     
     # ===== Server aggregates the local models =====
-    agg_time_start = time.time()
     global_dict, global_auxiliary = global_aggregate(
-        fed_args, global_dict, local_dict_list, sample_num_list, \
-        clients_this_round, round, proxy_dict=proxy_dict, \
-        opt_proxy_dict=opt_proxy_dict, auxiliary_info=(global_auxiliary, auxiliary_delta_dict)
-    )
+        global_dict, local_dict_list, sample_num_list, clients_this_round)
     set_peft_model_state_dict(model, global_dict)   # Update global model
-    agg_time_end = time.time()
-    total_aggregation_time += agg_time_end - agg_time_start
 
     # ===== Save the model =====
     if (round+1) % fed_args.save_model_freq == 0:
@@ -139,6 +132,3 @@ for round in tqdm(range(fed_args.num_rounds)):
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
 
 print("Federated training finished!")
-print(f"total_training_time: {total_training_time:.2f}s")
-print(f"total_communication_time: {total_communication_time:.2f}s")
-print(f"total_aggregation_time: {total_aggregation_time:.2f}s")
