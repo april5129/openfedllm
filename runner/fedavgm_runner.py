@@ -19,8 +19,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from algo.fedavg.client import *
-from algo.fedavg.server import *
+from algo.fedavgm.client import *
+from algo.fedavgm.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from utils import *
@@ -28,7 +28,7 @@ from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-fed_args.fed_alg = "fedavg" # Force the fed_alg parameter to be 'fedavg'
+fed_args.fed_alg = "fedavgm" # Force the fed_alg parameter to be 'fedavgm'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -127,7 +127,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         new_training_args = get_training_args(script_args, new_lr)
         
         # Creat trainer
-        trainer = get_fedavg_local_trainer(
+        trainer = get_fedavgm_local_trainer(
             model=model,
             tokenizer=tokenizer,
             training_args=new_training_args,
@@ -190,7 +190,9 @@ for round in tqdm(range(fed_args.num_rounds)):
     
     # ===== Server aggregates the local models =====
     global_dict, global_auxiliary = global_aggregate(
-        global_dict, local_dict_list, sample_num_list, clients_this_round)
+        fed_args, global_dict, local_dict_list, sample_num_list, \
+        clients_this_round, round, proxy_dict=proxy_dict
+    )
     set_peft_model_state_dict(model, global_dict)   # Update global model
     
     # ===== Save the global model =====
@@ -200,4 +202,4 @@ for round in tqdm(range(fed_args.num_rounds)):
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
 
-print("Fedavg federated training finished!")
+print("Fedavgm federated training finished!")
