@@ -1,6 +1,6 @@
 from trl import SFTTrainer
 
-def get_fedadgrad_local_trainer(script_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator):
+def get_fedadagrad_local_trainer(script_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator):
     trainer = SFTTrainer(
             model=model,
             tokenizer=tokenizer,
