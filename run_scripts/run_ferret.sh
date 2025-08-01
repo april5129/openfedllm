@@ -1,0 +1,1 @@
+python3 main_ferret.py --model openai-community/gpt2 --dataset instruct --lr 0.0001 --K 200 -m 0.01 --log --local_step 2 --slr_max 2 --anneal no --rounds 12 --device -1 --momentum 0.0 --n_accum 4 --equal_weight --seed 494
