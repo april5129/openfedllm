@@ -83,23 +83,6 @@ response_template_ids = tokenizer.encode(response_template, add_special_tokens=F
 data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
 # ===== Start federated training =====
-def calculate_model_size_gb(model_dict):
-    """计算模型参数的字节大小，返回GB单位"""
-    total_bytes = 0
-    for param_tensor in model_dict.values():
-        if isinstance(param_tensor, torch.Tensor):
-            # 计算参数数量 × 每个参数的字节数
-            total_bytes += param_tensor.numel() * param_tensor.element_size()
-    return total_bytes / (1024**3)  # 转换为GB
-
-# 在初始化部分添加通信量统计变量
-total_download_volume = 0.0  # 总下行通信量 (GB)
-total_upload_volume = 0.0    # 总上行通信量 (GB)
-
-# 计算单个模型的大小
-model_size_gb = calculate_model_size_gb(global_dict)
-print(f"Model parameter size: {model_size_gb:.4f} GB")
-
 training_loss = [[] for i in range(fed_args.num_clients)]
 total_training_time = 0.0
 total_communication_time = 0.0
@@ -164,7 +147,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
             script_args=script_args,
         )
         
-        # Training the model (训练时间)
+        # Training the model
         train_start = time.time()
         results = trainer.train()
         train_end = time.time()
@@ -191,10 +174,6 @@ for round in tqdm(range(fed_args.num_rounds)):
     clients_this_round = get_clients_this_round(fed_args, round)
     
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
-    
-    # 计算本轮下行通信量（服务端→客户端）
-    round_download_volume = len(clients_this_round) * model_size_gb
-    total_download_volume += round_download_volume
     
     # Use a thread pool to execute client training tasks
     max_workers = min(len(clients_this_round), 100)
@@ -235,11 +214,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     
     total_training_time += round_training_time
     total_communication_time += round_communication_time
-    
 
-    # 计算本轮上行通信量（客户端→服务端）
-    round_upload_volume = len(clients_this_round) * model_size_gb
-    total_upload_volume += round_upload_volume
     
     # ===== Server aggregates the local models =====
     agg_start = time.time()
@@ -251,7 +226,6 @@ for round in tqdm(range(fed_args.num_rounds)):
     total_aggregation_time += round_aggregation_time
     
     print(f"Round {round+1} - Training: {round_training_time:.2f}s, Communication: {round_communication_time:.2f}s, Aggregation: {round_aggregation_time:.2f}s")
-    print(f"Round {round+1} - Download: {round_download_volume:.4f}GB, Upload: {round_upload_volume:.4f}GB")
     
     # ===== Save the global model =====
     if (round+1) % fed_args.save_model_freq == 0:
@@ -260,20 +234,31 @@ for round in tqdm(range(fed_args.num_rounds)):
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss, dtype=object))
 
+    
+def calculate_model_size_gb(model_dict):
+    """计算模型参数的字节大小，返回GB单位"""
+    total_bytes = 0
+    for param_tensor in model_dict.values():
+        if isinstance(param_tensor, torch.Tensor):
+            # 计算参数字节数：参数数量 × 每个元素的字节大小
+            total_bytes += param_tensor.numel() * param_tensor.element_size()
+    
+    return total_bytes / (1024**3)  # 转换为GB
+
+communication_volume = calculate_model_size_gb(global_dict)  # 单次通信量
+communication_volume *= 2  # 上传和下载
+communication_volume *= len(clients_this_round) # 分发给多个客户端
+communication_volume *= fed_args.num_rounds # 总轮数
+
 # ===== Print timing statistics =====
-# 在最终统计中添加通信量信息
 print("\n" + "="*50)
 print("FEDERATED LEARNING STATISTICS")
 print("="*50)
-print(f"Total Training Time: {total_training_time:.2f} seconds")
-print(f"Total Communication Time: {total_communication_time:.2f} seconds")
-print(f"Total Aggregation Time: {total_aggregation_time:.2f} seconds")
-print(f"Total Time: {total_training_time + total_communication_time + total_aggregation_time:.2f} seconds")
+print(f"Total Training Time: {total_training_time:.8f} seconds")
+print(f"Total Communication Time: {total_communication_time:.8f} seconds")
+print(f"Total Aggregation Time: {total_aggregation_time:.8f} seconds")
+print(f"Total Time: {total_training_time + total_communication_time + total_aggregation_time:.8f} seconds")
 print("-"*50)
-print(f"Total Download Volume (Server→Clients): {total_download_volume:.4f} GB")
-print(f"Total Upload Volume (Clients→Server): {total_upload_volume:.4f} GB")
-print(f"Total Communication Volume: {total_download_volume + total_upload_volume:.4f} GB")
-print(f"Average Volume per Round: {(total_download_volume + total_upload_volume)/fed_args.num_rounds:.4f} GB")
+print(f"Total Communication Volume: {communication_volume:.8f} GB")
 print("="*50)
-
 print("Fedavg federated training finished!")

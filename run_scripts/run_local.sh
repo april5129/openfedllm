@@ -3,8 +3,8 @@ num_rounds=10 # 200
 batch_size=16 # 16
 gradient_accumulation_steps=1
 seq_length=16 # 512
-num_clients=1 # 20
-sample_clients=1 # 2
+num_clients=2 # 20
+sample_clients=0 # 选择第几个client作为单机训练的client
 lora_r=4 # 32
 lora_alpha=8 # 64   # twice of lora_r
 lr=5e-5
@@ -17,8 +17,8 @@ output_dir=./output
 
 # gpu=2
 
-# CUDA_VISIBLE_DEVICES=$gpu python3 runner/fedavg_runner.py \
-python3 runner/fedavg_runner.py \
+# CUDA_VISIBLE_DEVICES=$gpu python3 runner/local_runner.py \
+python3 runner/local_runner.py \
  --learning_rate $lr \
  --model_name_or_path $model_name_or_path \
  --dataset_name $dataset_name \
