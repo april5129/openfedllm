@@ -18,8 +18,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from algo.FT.local.client import *
-from algo.FT.local.server import *
+from algo.FedFT.base_client import *
+from algo.FedFT.local.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from utils import *
@@ -103,7 +103,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     training_args = get_training_args(script_args, new_lr)
 
     # ===== Train local model on the client side =====
-    trainer = get_local_trainer(
+    trainer = get_base_local_trainer(
         model=model,
         tokenizer=tokenizer,
         training_args=training_args,

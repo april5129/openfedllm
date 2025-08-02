@@ -19,8 +19,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from algo.FT.fedyogi.client import *
-from algo.FT.fedyogi.server import *
+from algo.FedFT.base_client import *
+from algo.FedFT.fedyogi.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from utils import *
@@ -136,7 +136,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         new_training_args = get_training_args(script_args, new_lr)
         
         # Creat trainer
-        trainer = get_fedyogi_local_trainer(
+        trainer = get_base_local_trainer(
             model=model,
             tokenizer=tokenizer,
             training_args=new_training_args,

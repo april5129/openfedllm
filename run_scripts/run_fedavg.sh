@@ -1,5 +1,5 @@
-max_steps=100 # 10
-num_rounds=10 # 200
+max_steps=1 # 10
+num_rounds=1 # 200
 batch_size=16 # 16
 gradient_accumulation_steps=1
 seq_length=16 # 512
