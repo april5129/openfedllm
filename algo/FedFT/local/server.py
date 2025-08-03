@@ -1,8 +1,3 @@
-import random
-
-def get_clients_this_round(fed_args):
-    clients_this_round = [int(fed_args.sample_clients)]
-    return clients_this_round
 
 def global_aggregate(global_dict, local_dict_list, sample_num_list, clients_this_round):
     sample_this_round = sum([sample_num_list[client] for client in clients_this_round])

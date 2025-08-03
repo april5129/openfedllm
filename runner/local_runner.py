@@ -28,6 +28,7 @@ from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
 fed_args.fed_alg = "local" # Force the fed_alg parameter to be 'local'
+fed_args.num_clients = 1 # Force the num_clients parameter to be '1'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -87,8 +88,8 @@ total_communication_time = 0.0
 total_aggregation_time = 0.0
 
 # 选择参与本轮训练的客户端
-clients_this_round = get_clients_this_round(fed_args)
-client_id = fed_args.sample_clients
+clients_this_round = [0]
+client_id = 0
 com_time_start = time.time()
 # 同步全局模型到本地
 set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model

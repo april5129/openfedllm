@@ -139,7 +139,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         trainer = get_fedprox_local_trainer(
             model=model,
             tokenizer=tokenizer,
-            training_args=training_args,
+            training_args=new_training_args,
             local_dataset=sub_dataset,
             formatting_prompts_func=formatting_prompts_func,
             data_collator=data_collator,

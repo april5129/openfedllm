@@ -1,10 +1,10 @@
-max_steps=100 # 10
-num_rounds=10 # 200
-batch_size=16 # 16
+max_steps=2 # 10
+num_rounds=1 # 200
+batch_size=1 # 16
 gradient_accumulation_steps=1
 seq_length=16 # 512
-num_clients=2 # 20
-sample_clients=0 # 选择第几个client作为单机训练的client
+num_clients=1
+sample_clients=1
 lora_r=4 # 32
 lora_alpha=8 # 64   # twice of lora_r
 lr=5e-5
