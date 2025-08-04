@@ -16,8 +16,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from algo.DPO.fedprox.client import *
-from algo.FedFT.fedprox.server import *
+from algo.DPO.scaffold.client import *
+from algo.FedFT.scaffold.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from dataset.process_dataset import *
@@ -26,7 +26,7 @@ from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-fed_args.fed_alg = "fedprox" # Force the fed_alg parameter to be 'fedprox'
+fed_args.fed_alg = "scaffold" # Force the fed_alg parameter to be 'scaffold'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -138,7 +138,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         sub_dataset = get_dataset_this_round(local_datasets[client_id], round, script_args)
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-5)      # manually schedule the learning rate
         new_training_args = get_training_args(script_args, new_lr)
-
+    
         # Creat trainer
         trainer = get_fed_local_dpo_trainer(
             script_args=script_args,
@@ -161,6 +161,8 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
 
         training_loss[client_id].append(results.training_loss)
         
+        auxiliary_model_list[client_id], auxiliary_delta_dict[client] = trainer.get_auxiliary_param()
+
         # Get the local model parameters
         comm_start = time.time()
         local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))
@@ -262,4 +264,4 @@ print(f"Total Time: {total_training_time + total_communication_time + total_aggr
 print("-"*50)
 print(f"Total Communication Volume: {communication_volume:.8f} GB")
 print("="*50)
-print("Fedprox federated training finished!")
+print("Scaffold federated training finished!")
