@@ -91,7 +91,6 @@ total_aggregation_time = 0.0
 clients_this_round = [0]
 client_id = 0
 com_time_start = time.time()
-# 同步全局模型到本地
 set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
 com_time_end = time.time()
 total_communication_time += com_time_end - com_time_start
@@ -167,4 +166,4 @@ print(f"Total Time: {total_training_time + total_communication_time + total_aggr
 print("-"*50)
 print(f"Total Communication Volume: {communication_volume:.8f} GB")
 print("-"*50)
-print("Local federated training finished!")       
+print("Local federated training finished!")

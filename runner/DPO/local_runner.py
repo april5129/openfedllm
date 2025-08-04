@@ -25,7 +25,8 @@ from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-fed_args.fed_alg = "fedavgm" # Force the fed_alg parameter to be 'fedavgm'
+fed_args.fed_alg = "local" # Force the fed_alg parameter to be 'local'
+fed_args.num_clients = 1 # Force the num_clients parameter to be '1'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
@@ -88,6 +89,7 @@ if tokenizer.pad_token is None:
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
+selected_client_id = int((fed_args.fed_alg)[-1]) if (fed_args.fed_alg).startswith('local') else None
 total_training_time = 0.0
 total_communication_time = 0.0
 total_aggregation_time = 0.0
@@ -173,12 +175,12 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
 for round in tqdm(range(fed_args.num_rounds)):
     # Select the clients participating in this round of training
     clients_this_round = get_clients_this_round(fed_args, round)
-    
+
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
     
     # Use a thread pool to execute client training tasks
     max_workers = min(len(clients_this_round), 100)  # Limit the number of concurrent threads to avoid  out-of-memory errors
-    
+
     round_training_time = 0.0
     round_communication_time = 0.0
 

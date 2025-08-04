@@ -88,7 +88,6 @@ if tokenizer.pad_token is None:
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
-selected_client_id = int((fed_args.fed_alg)[-1]) if (fed_args.fed_alg).startswith('local') else None
 total_training_time = 0.0
 total_communication_time = 0.0
 total_aggregation_time = 0.0
@@ -215,7 +214,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     total_training_time += round_training_time
     total_communication_time += round_communication_time
 
-    # ===== Aggregate the local models =====
+    # ===== Server aggregate the local models =====
     agg_start = time.time()
     global_dict, global_auxiliary = global_aggregate(
         global_dict, local_dict_list, sample_num_list, clients_this_round)
