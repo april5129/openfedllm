@@ -23,6 +23,7 @@ from algo.FedFT.base_client import *
 from algo.FedFT.fedadagrad.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
+from dataset.process_dataset import *
 from utils import *
 from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 

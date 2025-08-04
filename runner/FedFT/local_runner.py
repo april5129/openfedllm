@@ -22,6 +22,7 @@ from algo.FedFT.base_client import *
 from algo.FedFT.local.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
+from dataset.process_dataset import *
 from utils import *
 from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
@@ -97,7 +98,7 @@ total_communication_time += com_time_end - com_time_start
 for round in tqdm(range(fed_args.num_rounds)):
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
 
-    sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)      # get the required sub-dataset for this round
+    sub_dataset = get_dataset_this_round(local_datasets[client_id], round, script_args)      # get the required sub-dataset for this round
     new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6)      # manually schedule the learning rate
     training_args = get_training_args(script_args, new_lr)
 

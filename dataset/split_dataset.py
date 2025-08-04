@@ -9,7 +9,7 @@ def split_dataset(fed_args, script_args, dataset):
     
     return local_datasets
 
-def get_dataset_this_round(dataset, round, fed_args, script_args):
+def get_dataset_this_round(dataset, round, script_args):
     num2sample = script_args.batch_size * script_args.gradient_accumulation_steps * script_args.max_steps
     num2sample = min(num2sample, len(dataset))
     random.seed(round)

@@ -1,7 +1,7 @@
 import datasets
 from datasets import load_dataset
 import pandas as pd
-from .conversation import get_conv_template
+from utils.conversation import get_conv_template
 from functools import partial
 
 def get_dataset(dataset_name, local_data_dir=None):

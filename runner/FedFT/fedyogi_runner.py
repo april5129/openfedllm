@@ -23,6 +23,7 @@ from algo.FedFT.base_client import *
 from algo.FedFT.fedyogi.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
+from dataset.process_dataset import *
 from utils import *
 from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
@@ -130,7 +131,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         communication_time += comm_end - comm_start
 
         # Get current round's dataset
-        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)
+        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, script_args)
         
         new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6) # Cosine LR decay
         new_training_args = get_training_args(script_args, new_lr)
