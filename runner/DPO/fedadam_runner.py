@@ -1,17 +1,14 @@
+import sys
 import copy
 import os
-import sys
+import torch
 import time
 import numpy as np
 from tqdm import tqdm
+from typing import Dict
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from trl import DataCollatorForCompletionOnlyLM
-from peft import (
-    get_peft_model, 
-    get_peft_model_state_dict, 
-    set_peft_model_state_dict, 
-    prepare_model_for_kbit_training
-)
+from trl import DataCollatorForCompletionOnlyLM, DPOTrainer
+from peft import get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict, prepare_model_for_kbit_training, AutoPeftModelForCausalLM
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -19,8 +16,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from algo.FedFT.base_client import *
-from algo.FedFT.fedadgrad.server import *
+from algo.DPO.base_client import *
+from algo.FedFT.fedadam.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from dataset.process_dataset import *
@@ -29,14 +26,14 @@ from utils.fed_utils import get_proxy_dict, get_auxiliary_dict
 
 # ===== Define the arguments =====
 script_args, fed_args, peft_config = get_config()
-fed_args.fed_alg = "fedadgrad" # Force the fed_alg parameter to be 'fedadgrad'
+fed_args.fed_alg = "fedadam" # Force the fed_alg parameter to be 'fedadam'
 training_args = get_training_args(script_args, script_args.learning_rate)
 save_config(script_args, fed_args)
 print(script_args, fed_args)
 
 # ===== Load the dataset =====
 dataset = get_dataset(script_args.dataset_name, script_args.local_data_dir)
-dataset = process_sft_dataset(script_args.dataset_name, dataset, script_args.dataset_sample)
+dataset = process_dpo_dataset(script_args.dataset_name, dataset, script_args.template, script_args.dataset_sample)
 
 # ===== Split the dataset into clients =====
 local_datasets = split_dataset(fed_args, script_args, dataset)
@@ -52,6 +49,19 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=script_args.trust_remote_code,
     torch_dtype=torch_dtype,
 )
+
+if script_args.use_peft == True:
+    model_ref = None
+else:
+    # construct a reference model with the identical original parameters
+    # e.g. DPO need a reference model to compute the discrepancy loss
+    model_ref = AutoModelForCausalLM.from_pretrained(
+        script_args.model_name_or_path,
+        quantization_config=quantization_config,
+        device_map=device_map,
+        trust_remote_code=script_args.trust_remote_code,
+        torch_dtype=torch_dtype,
+    )
 
 if script_args.load_in_8bit or script_args.load_in_4bit:
     model = prepare_model_for_kbit_training(
@@ -77,11 +87,6 @@ tokenizer = AutoTokenizer.from_pretrained(script_args.model_name_or_path, use_fa
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.unk_token   # following vicuna
 
-# ===== Define the formatting function (cater to TRL SFTTrainer)=====
-formatting_prompts_func, response_template = get_formatting_prompts_func(script_args.template, tokenizer.eos_token)
-response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]   # Now we have it like in the dataset texts: `[2277, 29937, 4007, 22137, 29901]` for Llama2
-data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
-
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
 total_training_time = 0.0
@@ -90,8 +95,7 @@ total_aggregation_time = 0.0
 
 # Define the client training function
 def train_client(client_id, global_dict, local_datasets, round, fed_args, script_args, 
-                 tokenizer, formatting_prompts_func, data_collator, training_loss, 
-                 local_dict_list, clients_this_round):
+                 tokenizer, training_loss, local_dict_list, clients_this_round):
     """
     Single-client training function
     """
@@ -131,20 +135,18 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         communication_time += comm_end - comm_start
         
         # Get current round's dataset
-        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)
-        
-        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6) # Cosine LR decay
+        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, script_args)      # get the required sub-dataset for this round
+        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-5)      # manually schedule the learning rate
         new_training_args = get_training_args(script_args, new_lr)
-        
+
         # Creat trainer
-        trainer = get_base_local_trainer(
+        trainer = get_fed_local_dpo_trainer(
+            script_args=script_args,
             model=model,
+            model_ref=model_ref,
             tokenizer=tokenizer,
             training_args=new_training_args,
             local_dataset=sub_dataset,
-            formatting_prompts_func=formatting_prompts_func,
-            data_collator=data_collator,
-            script_args=script_args,
         )
         
         # Training the model
@@ -177,7 +179,7 @@ for round in tqdm(range(fed_args.num_rounds)):
     
     # Use a thread pool to execute client training tasks
     max_workers = min(len(clients_this_round), 100)  # Limit the number of concurrent threads to avoid  out-of-memory errors
-
+    
     round_training_time = 0.0
     round_communication_time = 0.0
 
@@ -193,8 +195,6 @@ for round in tqdm(range(fed_args.num_rounds)):
                 fed_args, 
                 script_args,
                 tokenizer, 
-                formatting_prompts_func, 
-                data_collator, 
                 training_loss, 
                 local_dict_list, 
                 clients_this_round
@@ -215,16 +215,16 @@ for round in tqdm(range(fed_args.num_rounds)):
     total_training_time += round_training_time
     total_communication_time += round_communication_time
 
-    # ===== Server aggregates the local models =====
+    # ===== Server aggregate the local models =====
     agg_start = time.time()
     global_dict, global_auxiliary = global_aggregate(
-        fed_args, global_dict, local_dict_list, clients_this_round, proxy_dict=proxy_dict, opt_proxy_dict=opt_proxy_dict
+        fed_args, global_dict, local_dict_list, clients_this_round, round, proxy_dict=proxy_dict, opt_proxy_dict=opt_proxy_dict
     )
     set_peft_model_state_dict(model, global_dict)   # Update global model
     agg_end = time.time()
     round_aggregation_time = agg_end - agg_start
     total_aggregation_time += round_aggregation_time
-
+    
     print(f"Round {round+1} - Training: {round_training_time:.2f}s, Communication: {round_communication_time:.2f}s, Aggregation: {round_aggregation_time:.2f}s")
 
     # ===== Save the global model =====
@@ -259,4 +259,4 @@ print(f"Total Time: {total_training_time + total_communication_time + total_aggr
 print("-"*50)
 print(f"Total Communication Volume: {communication_volume:.8f} GB")
 print("="*50)
-print("Fedadagrad federated training finished!")
+print("Fedadam federated training finished!")

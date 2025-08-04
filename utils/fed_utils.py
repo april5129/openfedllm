@@ -4,7 +4,7 @@ import copy
 def get_proxy_dict(fed_args, global_dict):
     opt_proxy_dict = None
     proxy_dict = None
-    if fed_args.fed_alg in ['fedadagrad', 'fedyogi', 'fedadam']:
+    if fed_args.fed_alg in ['fedadgrad', 'fedyogi', 'fedadam']:
         proxy_dict, opt_proxy_dict = {}, {}
         for key in global_dict.keys():
             proxy_dict[key] = torch.zeros_like(global_dict[key])
