@@ -96,7 +96,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
     """
     if client_id not in clients_this_round:
         training_loss[client_id].append(-1)  # -1 indicates that the client did not participate in training
-        return None, 0.0, 0.0  # 返回训练时间和通信时间
+        return None, 0.0, 0.0  # Return training time and communication time
     
     training_time = 0.0
     communication_time = 0.0
@@ -234,19 +234,19 @@ for round in tqdm(range(fed_args.num_rounds)):
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
 
 def calculate_model_size_gb(model_dict):
-    """计算模型参数的字节大小，返回GB单位"""
+    """Calculate model parameter byte size, return in GB units"""
     total_bytes = 0
     for param_tensor in model_dict.values():
         if isinstance(param_tensor, torch.Tensor):
-            # 计算参数字节数：参数数量 × 每个元素的字节大小
+            # Calculate parameter bytes: number of parameters × bytes per element
             total_bytes += param_tensor.numel() * param_tensor.element_size()
     
-    return total_bytes / (1024**3)  # 转换为GB
+    return total_bytes / (1024**3)  # Convert to GB
 
-communication_volume = calculate_model_size_gb(global_dict)  # 单次通信量
-communication_volume *= 2  # 上传和下载
-communication_volume *= len(clients_this_round) # 分发给多个客户端
-communication_volume *= fed_args.num_rounds # 总轮数
+communication_volume = calculate_model_size_gb(global_dict)  # Single communication volume
+communication_volume *= 2  # Upload and download
+communication_volume *= len(clients_this_round) # Distribute to multiple clients
+communication_volume *= fed_args.num_rounds # Total rounds
 
 print("\n" + "="*50)
 print("FEDERATED LEARNING STATISTICS")

@@ -1,7 +1,7 @@
 import copy
 import os
 import sys
-import time  # 新增
+import time
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -97,13 +97,13 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
     """
     if client_id not in clients_this_round:
         training_loss[client_id].append(-1)  # -1 indicates that the client did not participate in training
-        return None, 0.0, 0.0  # 返回训练时间和通信时间
+        return None, 0.0, 0.0  # Return training time and communication time
     
     training_time = 0.0
     communication_time = 0.0
     
     try:
-        # Create model replicas (每个线程requires an independent model instance)
+        # Create model replicas (each thread requires an independent model instance)
         device_map, quantization_config, torch_dtype = get_model_config(script_args)
         model = AutoModelForCausalLM.from_pretrained(
             script_args.model_name_or_path,
@@ -155,7 +155,7 @@ def train_client(client_id, global_dict, local_datasets, round, fed_args, script
         
         training_loss[client_id].append(results.training_loss)
         
-        # Get the local model parameters (通信时间)
+        # Get the local model parameters (communication time)
         comm_start = time.time()
         local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))
         comm_end = time.time()
@@ -236,19 +236,19 @@ for round in tqdm(range(fed_args.num_rounds)):
 
     
 def calculate_model_size_gb(model_dict):
-    """计算模型参数的字节大小，返回GB单位"""
+    """Calculate model parameter byte size, return in GB units"""
     total_bytes = 0
     for param_tensor in model_dict.values():
         if isinstance(param_tensor, torch.Tensor):
-            # 计算参数字节数：参数数量 × 每个元素的字节大小
+            # Calculate parameter bytes: number of parameters × bytes per element
             total_bytes += param_tensor.numel() * param_tensor.element_size()
     
-    return total_bytes / (1024**3)  # 转换为GB
+    return total_bytes / (1024**3)  # Convert to GB
 
-communication_volume = calculate_model_size_gb(global_dict)  # 单次通信量
-communication_volume *= 2  # 上传和下载
-communication_volume *= len(clients_this_round) # 分发给多个客户端
-communication_volume *= fed_args.num_rounds # 总轮数
+communication_volume = calculate_model_size_gb(global_dict)  # Single communication volume
+communication_volume *= 2  # Upload and download
+communication_volume *= len(clients_this_round) # Distribute to multiple clients
+communication_volume *= fed_args.num_rounds # Total rounds
 
 # ===== Print timing statistics =====
 print("\n" + "="*50)
