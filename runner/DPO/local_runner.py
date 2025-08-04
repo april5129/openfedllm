@@ -17,7 +17,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from algo.DPO.base_client import *
-from algo.FedFT.fedavgm.server import *
+from algo.FedFT.local.server import *
 from config import get_config, save_config, get_model_config, get_training_args
 from dataset.split_dataset import *
 from utils import *
@@ -89,155 +89,66 @@ if tokenizer.pad_token is None:
 
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
-selected_client_id = int((fed_args.fed_alg)[-1]) if (fed_args.fed_alg).startswith('local') else None
 total_training_time = 0.0
 total_communication_time = 0.0
 total_aggregation_time = 0.0
 
-# Define the client training function
-def train_client(client_id, global_dict, local_datasets, round, fed_args, script_args, 
-                 tokenizer, training_loss, local_dict_list, clients_this_round):
-    """
-    Single-client training function
-    """
-    if client_id not in clients_this_round:
-        training_loss[client_id].append(-1)  # -1 indicates that the client did not participate in training
-        return None, 0.0, 0.0  # 返回训练时间和通信时间
-
-    training_time = 0.0
-    communication_time = 0.0
-    
-    try:
-        # Create model replicas (each thread requires an independent model instance)
-        device_map, quantization_config, torch_dtype = get_model_config(script_args)
-        model = AutoModelForCausalLM.from_pretrained(
-            script_args.model_name_or_path,
-            quantization_config=quantization_config,
-            device_map=device_map,
-            trust_remote_code=script_args.trust_remote_code,
-            torch_dtype=torch_dtype,
-        )
-        
-        if script_args.load_in_8bit or script_args.load_in_4bit:
-            model = prepare_model_for_kbit_training(
-                model, use_gradient_checkpointing=training_args.gradient_checkpointing
-            )
-        
-        model = get_peft_model(model, peft_config)
-        model.config.use_cache = False
-        
-        if training_args.gradient_checkpointing:
-            model.enable_input_require_grads()
-        
-        # Sync global model to local
-        comm_start = time.time()
-        set_peft_model_state_dict(model, global_dict)
-        comm_end = time.time()
-        communication_time += comm_end - comm_start
-        
-        # Get current round's dataset
-        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)      # get the required sub-dataset for this round
-        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-5)      # manually schedule the learning rate
-        new_training_args = get_training_args(script_args, new_lr)
-
-        # Creat trainer
-        trainer = get_fed_local_dpo_trainer(
-            script_args=script_args,
-            model=model,
-            model_ref=model_ref,
-            tokenizer=tokenizer,
-            training_args=new_training_args,
-            local_dataset=sub_dataset,
-        )
-        
-        # Training the model
-        train_start = time.time()
-        results = trainer.train()
-        train_end = time.time()
-        training_time = train_end - train_start
-
-        training_loss[client_id].append(results.training_loss)
-        
-        # Get the local model parameters
-        comm_start = time.time()
-        local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))
-        comm_end = time.time()
-        communication_time += comm_end - comm_start
-
-        print(f"Client {client_id} training completed")
-        return None, training_time, communication_time
-        
-    except Exception as e:
-        print(f"Error in client {client_id} training: {e}")
-        training_loss[client_id].append(-1)
-        return None, 0.0, 0.0
+clients_this_round = [0]
+client_id = 0
+com_time_start = time.time()
+set_peft_model_state_dict(model, global_dict)   # sync the global model to the local model
+com_time_end = time.time()
+total_communication_time += com_time_end - com_time_start
 
 for round in tqdm(range(fed_args.num_rounds)):
-    # Select the clients participating in this round of training
-    clients_this_round = get_clients_this_round(fed_args, round)
-
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
     
-    # Use a thread pool to execute client training tasks
-    max_workers = min(len(clients_this_round), 100)  # Limit the number of concurrent threads to avoid  out-of-memory errors
+    # Get current round's dataset
+    sub_dataset = get_dataset_this_round(local_datasets[client_id], round, fed_args, script_args)      # get the required sub-dataset for this round
+    new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-5)      # manually schedule the learning rate
+    new_training_args = get_training_args(script_args, new_lr)
 
-    round_training_time = 0.0
-    round_communication_time = 0.0
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all client training tasks
-        future_to_client = {
-            executor.submit(
-                train_client, 
-                client, 
-                copy.deepcopy(global_dict),  # Each thread gets its own independent replica of the global model
-                local_datasets, 
-                round, 
-                fed_args, 
-                script_args,
-                tokenizer, 
-                training_loss, 
-                local_dict_list, 
-                clients_this_round
-            ): client for client in range(fed_args.num_clients)
-        }
-        
-        # Wait for all tasks to complete
-        for future in as_completed(future_to_client):
-            client = future_to_client[future]
-            try:
-                _, train_time, comm_time = future.result()
-                if train_time is not None:
-                    round_training_time = max(round_training_time, train_time)
-                    round_communication_time = max(round_communication_time, comm_time)
-            except Exception as exc:
-                print(f'Client {client} generated an exception: {exc}')
-    
-    total_training_time += round_training_time
-    total_communication_time += round_communication_time
-
-    # ===== Server aggregate the local models =====
-    agg_start = time.time()
-    global_dict, global_auxiliary = global_aggregate(
-        fed_args, global_dict, local_dict_list, sample_num_list, \
-        clients_this_round, round, proxy_dict=proxy_dict
+    # Creat trainer
+    trainer = get_fed_local_dpo_trainer(
+        script_args=script_args,
+        model=model,
+        model_ref=model_ref,
+        tokenizer=tokenizer,
+        training_args=new_training_args,
+        local_dataset=sub_dataset,
     )
-    set_peft_model_state_dict(model, global_dict)   # Update global model
-    agg_end = time.time()
-    round_aggregation_time = agg_end - agg_start
-    total_aggregation_time += round_aggregation_time
-    
-    print(f"Round {round+1} - Training: {round_training_time:.2f}s, Communication: {round_communication_time:.2f}s, Aggregation: {round_aggregation_time:.2f}s")
+        
+    # Training the model
+    train_start = time.time()
+    results = trainer.train()
+    train_end = time.time()
+    training_time = train_end - train_start
 
-    # ===== Save the global model =====
-    if (round+1) % fed_args.save_model_freq == 0:
-        model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
-        tokenizer.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+    training_loss[client_id].append(results.training_loss)
+        
+# ===== Client transmits local information to server =====
+com_time_start = time.time()
+local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))   # copy is needed!
+com_time_end = time.time()
+total_communication_time += com_time_end - com_time_start
+
+# ===== Server aggregate the local models =====
+agg_time_start = time.time()
+global_dict, global_auxiliary = global_aggregate(
+    global_dict, local_dict_list, sample_num_list, clients_this_round
+)
+set_peft_model_state_dict(model, global_dict)   # Update global model
+agg_time_end = time.time()
+total_aggregation_time += agg_time_end - agg_time_start
     
-    np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss))
+# ===== Save the model =====
+if (round+1) % fed_args.save_model_freq == 0:
+    trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+    
+np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss[client_id]))
 
 def calculate_model_size_gb(model_dict):
-    """计算模型参数的字节大小，返回GB单位"""
+    """计算模型参数的字节大小, 返回GB单位"""
     total_bytes = 0
     for param_tensor in model_dict.values():
         if isinstance(param_tensor, torch.Tensor):
@@ -249,8 +160,7 @@ def calculate_model_size_gb(model_dict):
 communication_volume = calculate_model_size_gb(global_dict)  # 单次通信量
 communication_volume *= 2  # 上传和下载
 communication_volume *= len(clients_this_round) # 分发给多个客户端
-communication_volume *= fed_args.num_rounds # 总轮数
-
+# communication_volume *= fed_args.num_rounds # 总轮数
 print("\n" + "="*50)
 print("FEDERATED LEARNING STATISTICS")
 print("="*50)
@@ -260,5 +170,5 @@ print(f"Total Aggregation Time: {total_aggregation_time:.8f} seconds")
 print(f"Total Time: {total_training_time + total_communication_time + total_aggregation_time:.8f} seconds")
 print("-"*50)
 print(f"Total Communication Volume: {communication_volume:.8f} GB")
-print("="*50)
-print("Fedavgm federated training finished!")
+print("-"*50)
+print("Local federated training finished!")

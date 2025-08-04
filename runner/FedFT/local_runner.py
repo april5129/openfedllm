@@ -87,7 +87,6 @@ total_training_time = 0.0
 total_communication_time = 0.0
 total_aggregation_time = 0.0
 
-# 选择参与本轮训练的客户端
 clients_this_round = [0]
 client_id = 0
 com_time_start = time.time()
@@ -139,7 +138,6 @@ total_aggregation_time += agg_time_end - agg_time_start
 if (round+1) % fed_args.save_model_freq == 0:
     trainer.save_model(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
     
-client_id = fed_args.sample_clients
 np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss[client_id]))
 
 def calculate_model_size_gb(model_dict):
