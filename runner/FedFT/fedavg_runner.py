@@ -14,6 +14,9 @@ from peft import (
     prepare_model_for_kbit_training
 )
 
+import ray
+from ray import serve
+from ray.util.queue import Queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -83,135 +86,163 @@ formatting_prompts_func, response_template = get_formatting_prompts_func(script_
 response_template_ids = tokenizer.encode(response_template, add_special_tokens=False)[2:]   # Now we have it like in the dataset texts: `[2277, 29937, 4007, 22137, 29901]` for Llama2
 data_collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
+# ===== Initialize Ray =====
+if not ray.is_initialized():
+    ray.init(ignore_reinit_error=True)
+
+# ===== Define Ray Client Actor =====
+@ray.remote(num_cpus=1, num_gpus=0.5 if torch.cuda.is_available() else 0)
+class FedClient:
+    def __init__(self, client_id, script_args, fed_args, peft_config, tokenizer, 
+                 formatting_prompts_func, data_collator, local_dataset):
+        self.client_id = client_id
+        self.script_args = script_args
+        self.fed_args = fed_args
+        self.peft_config = peft_config
+        self.tokenizer = tokenizer
+        self.formatting_prompts_func = formatting_prompts_func
+        self.data_collator = data_collator
+        self.local_dataset = local_dataset
+        self.model = None
+        self.training_loss = []
+        
+    def initialize_model(self):
+        """Initialize the model for this client"""
+        from config import get_model_config, get_training_args
+        
+        device_map, quantization_config, torch_dtype = get_model_config(self.script_args)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.script_args.model_name_or_path,
+            quantization_config=quantization_config,
+            device_map=device_map,
+            trust_remote_code=self.script_args.trust_remote_code,
+            torch_dtype=torch_dtype,
+        )
+        
+        if self.script_args.load_in_8bit or self.script_args.load_in_4bit:
+            self.model = prepare_model_for_kbit_training(
+                self.model, use_gradient_checkpointing=True
+            )
+        
+        self.model = get_peft_model(self.model, self.peft_config)
+        self.model.config.use_cache = False
+        
+        if True:  # gradient_checkpointing
+            self.model.enable_input_require_grads()
+    
+    def train(self, global_dict, round_num, clients_this_round):
+        """Train the client model"""
+        if self.client_id not in clients_this_round:
+            self.training_loss.append(-1)
+            return None, 0.0, 0.0
+        
+        if self.model is None:
+            self.initialize_model()
+        
+        training_time = 0.0
+        communication_time = 0.0
+        
+        try:
+            # Sync global model to local
+            comm_start = time.time()
+            set_peft_model_state_dict(self.model, global_dict)
+            comm_end = time.time()
+            communication_time += comm_end - comm_start
+            
+            # Get current round's dataset
+            from dataset.split_dataset import get_dataset_this_round
+            from utils.fed_utils import cosine_learning_rate
+            from config import get_training_args
+            from algo.FedFT.base_client import get_base_local_trainer
+            
+            sub_dataset = get_dataset_this_round(self.local_dataset, round_num, self.script_args)
+            
+            new_lr = cosine_learning_rate(round_num, self.fed_args.num_rounds, 
+                                        self.script_args.learning_rate, 1e-6)
+            new_training_args = get_training_args(self.script_args, new_lr)
+            
+            # Create trainer
+            trainer = get_base_local_trainer(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                training_args=new_training_args,
+                local_dataset=sub_dataset,
+                formatting_prompts_func=self.formatting_prompts_func,
+                data_collator=self.data_collator,
+                script_args=self.script_args,
+            )
+            
+            # Training the model
+            train_start = time.time()
+            results = trainer.train()
+            train_end = time.time()
+            training_time = train_end - train_start
+            
+            self.training_loss.append(results.training_loss)
+            
+            # Get the local model parameters
+            comm_start = time.time()
+            local_dict = copy.deepcopy(get_peft_model_state_dict(self.model))
+            comm_end = time.time()
+            communication_time += comm_end - comm_start
+            
+            return local_dict, training_time, communication_time
+            
+        except Exception as e:
+            print(f"Error in client {self.client_id} training: {e}")
+            self.training_loss.append(-1)
+            return None, 0.0, 0.0
+    
+    def get_training_loss(self):
+        """Get training loss history"""
+        return self.training_loss
+
 # ===== Start federated training =====
 training_loss = [[] for i in range(fed_args.num_clients)]
 total_training_time = 0.0
 total_communication_time = 0.0
 total_aggregation_time = 0.0
 
-# Define the client training function
-def train_client(client_id, global_dict, local_datasets, round, fed_args, script_args, 
-                 tokenizer, formatting_prompts_func, data_collator, training_loss, 
-                 local_dict_list, clients_this_round):
-    """
-    Single-client training function
-    """
-    if client_id not in clients_this_round:
-        training_loss[client_id].append(-1)  # -1 indicates that the client did not participate in training
-        return None, 0.0, 0.0  # Return training time and communication time
-    
-    training_time = 0.0
-    communication_time = 0.0
-    
-    try:
-        # Create model replicas (each thread requires an independent model instance)
-        device_map, quantization_config, torch_dtype = get_model_config(script_args)
-        model = AutoModelForCausalLM.from_pretrained(
-            script_args.model_name_or_path,
-            quantization_config=quantization_config,
-            device_map=device_map,
-            trust_remote_code=script_args.trust_remote_code,
-            torch_dtype=torch_dtype,
-        )
-        
-        if script_args.load_in_8bit or script_args.load_in_4bit:
-            model = prepare_model_for_kbit_training(
-                model, use_gradient_checkpointing=training_args.gradient_checkpointing
-            )
-        
-        model = get_peft_model(model, peft_config)
-        model.config.use_cache = False
-        
-        if training_args.gradient_checkpointing:
-            model.enable_input_require_grads()
-        
-        # Sync global model to local
-        comm_start = time.time()
-        set_peft_model_state_dict(model, global_dict)
-        comm_end = time.time()
-        communication_time += comm_end - comm_start
-        
-        # Get current round's dataset
-        sub_dataset = get_dataset_this_round(local_datasets[client_id], round, script_args)
-        
-        new_lr = cosine_learning_rate(round, fed_args.num_rounds, script_args.learning_rate, 1e-6) # Cosine LR decay
-        new_training_args = get_training_args(script_args, new_lr)
-        
-        # Creat trainer
-        trainer = get_base_local_trainer(
-            model=model,
-            tokenizer=tokenizer,
-            training_args=new_training_args,
-            local_dataset=sub_dataset,
-            formatting_prompts_func=formatting_prompts_func,
-            data_collator=data_collator,
-            script_args=script_args,
-        )
-        
-        # Training the model
-        train_start = time.time()
-        results = trainer.train()
-        train_end = time.time()
-        training_time = train_end - train_start
-        
-        training_loss[client_id].append(results.training_loss)
-        
-        # Get the local model parameters (communication time)
-        comm_start = time.time()
-        local_dict_list[client_id] = copy.deepcopy(get_peft_model_state_dict(model))
-        comm_end = time.time()
-        communication_time += comm_end - comm_start
-        
-        print(f"Client {client_id} training completed")
-        return None, training_time, communication_time
-        
-    except Exception as e:
-        print(f"Error in client {client_id} training: {e}")
-        training_loss[client_id].append(-1)
-        return None, 0.0, 0.0
 
+
+
+# ===== Create Ray clients =====
+print("Creating Ray client actors...")
+ray_clients = []
+for client_id in range(fed_args.num_clients):
+    client = FedClient.remote(
+        client_id, script_args, fed_args, peft_config, tokenizer,
+        formatting_prompts_func, data_collator, local_datasets[client_id]
+    )
+    ray_clients.append(client)
 
 for round in tqdm(range(fed_args.num_rounds)):
     clients_this_round = get_clients_this_round(fed_args, round)
     
     print(f">> ==================== Round {round+1} : {clients_this_round} ====================")
     
-    # Use a thread pool to execute client training tasks
-    max_workers = min(len(clients_this_round), 100)
-    
     round_training_time = 0.0
     round_communication_time = 0.0
     
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all client training tasks
-        future_to_client = {
-            executor.submit(
-                train_client, 
-                client, 
-                copy.deepcopy(global_dict),
-                local_datasets, 
-                round, 
-                fed_args, 
-                script_args,
-                tokenizer, 
-                formatting_prompts_func, 
-                data_collator, 
-                training_loss, 
-                local_dict_list, 
-                clients_this_round
-            ): client for client in clients_this_round
-        }
-        
-        # Collect results from all clients
-        for future in as_completed(future_to_client):
-            client = future_to_client[future]
-            try:
-                _, train_time, comm_time = future.result()
-                if train_time is not None:
-                    round_training_time = max(round_training_time, train_time)
-                    round_communication_time = max(round_communication_time, comm_time)
-            except Exception as exc:
-                print(f'Client {client} generated an exception: {exc}')
+    # Submit training tasks to Ray clients
+    training_futures = []
+    for client_id in clients_this_round:
+        future = ray_clients[client_id].train.remote(
+            copy.deepcopy(global_dict), round, clients_this_round
+        )
+        training_futures.append((client_id, future))
+    
+    # Collect results from all clients
+    local_dict_list = [None] * fed_args.num_clients
+    for client_id, future in training_futures:
+        try:
+            local_dict, train_time, comm_time = ray.get(future)
+            if local_dict is not None:
+                local_dict_list[client_id] = local_dict
+                round_training_time = max(round_training_time, train_time)
+                round_communication_time = max(round_communication_time, comm_time)
+        except Exception as exc:
+            print(f'Client {client_id} generated an exception: {exc}')
     
     total_training_time += round_training_time
     total_communication_time += round_communication_time
@@ -232,6 +263,10 @@ for round in tqdm(range(fed_args.num_rounds)):
     if (round+1) % fed_args.save_model_freq == 0:
         model.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
         tokenizer.save_pretrained(os.path.join(script_args.output_dir, f"checkpoint-{round+1}"))
+    
+    # Collect training loss from all clients
+    for client_id in range(fed_args.num_clients):
+        training_loss[client_id] = ray.get(ray_clients[client_id].get_training_loss.remote())
     
     np.save(os.path.join(script_args.output_dir, "training_loss.npy"), np.array(training_loss, dtype=object))
 
@@ -263,3 +298,6 @@ print("-"*50)
 print(f"Total Communication Volume: {communication_volume:.8f} GB")
 print("="*50)
 print("Fedavg federated training finished!")
+
+# ===== Cleanup Ray =====
+ray.shutdown()

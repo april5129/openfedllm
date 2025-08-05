@@ -1,0 +1,46 @@
+# 针对低内存服务器优化的Ray集群配置
+# 适用于3.7GB内存的腾讯云服务器
+
+cluster_name: openfedllm_cluster
+
+# 最小化内存使用
+min_workers: 0
+max_workers: 2
+
+# 内存配置（保守设置）
+head_node:
+  object_store_memory: 500000000  # 500MB
+  memory: 1000000000              # 1GB
+  num_cpus: 2
+  num_gpus: 0
+
+worker_nodes:
+  object_store_memory: 300000000  # 300MB
+  memory: 800000000               # 800MB
+  num_cpus: 1
+  num_gpus: 0
+
+# 系统配置
+system_config:
+  object_spilling_config: '{"type": "filesystem", "params": {"directory_path": "/tmp/ray/spill"}}'
+  task_retry_delay_ms: 1000
+  object_timeout_milliseconds: 1000
+
+# 文件系统配置
+file_mounts: {}
+
+# 初始化命令
+setup_commands:
+  - echo "设置Ray集群环境..."
+  - mkdir -p /tmp/ray/spill
+
+# 启动命令
+head_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536
+  - ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 --object-store-memory=500000000 --memory=1000000000 --num-cpus=2
+
+worker_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536
+  - ray start --address=$RAY_HEAD_IP:6379 --object-store-memory=300000000 --memory=800000000 --num-cpus=1 

@@ -1,6 +1,6 @@
 from trl import SFTTrainer
 
-def get_base_local_trainer(script_args, model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator):
+def get_base_local_trainer(model, tokenizer, training_args, local_dataset, formatting_prompts_func, data_collator, script_args):
     trainer = SFTTrainer(
             model=model,
             tokenizer=tokenizer,

@@ -1,0 +1,55 @@
+# Ray集群配置文件
+# 用于分布式联邦学习
+
+cluster_name: fedllm-cluster
+
+# 头节点配置
+head_node:
+  node_type: head
+  resources:
+    cpu: 4
+    memory: 16000
+    gpu: 1  # 如果有GPU的话
+
+# 工作节点配置
+worker_nodes:
+  - node_type: worker
+    resources:
+      cpu: 8
+      memory: 32000
+      gpu: 2  # 每个工作节点2个GPU
+    min_workers: 2
+    max_workers: 10
+
+# 自动缩放配置
+autoscaling:
+  min_workers: 2
+  max_workers: 10
+  target_utilization_fraction: 0.8
+  idle_timeout_minutes: 5
+
+# 文件系统配置
+file_mounts:
+  # 挂载模型和数据目录
+  /mnt/models: ./output
+  /mnt/data: ./dataset
+
+# 环境变量
+env_vars:
+  PYTHONPATH: "/root/openfedllm"
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"
+  RAY_DISABLE_IMPORT_WARNING: "1"
+
+# 启动命令
+setup_commands:
+  - pip install -r requirements.txt
+  - echo "Ray集群设置完成"
+
+# 启动命令
+head_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536; ray start --head --port=6379 --autoscaling-config=~/ray_bootstrap_config.yaml
+
+worker_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536; ray start --address=$RAY_HEAD_IP:6379 

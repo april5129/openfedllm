@@ -1,0 +1,2 @@
+Requirement already satisfied: scipy in /usr/local/lib64/python3.9/site-packages (1.11.2)
+Requirement already satisfied: numpy<1.28.0,>=1.21.6 in /usr/local/lib64/python3.9/site-packages (from scipy) (1.25.2)
